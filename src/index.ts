@@ -1,8 +1,11 @@
 import type { AstroConfig, AstroIntegration } from "astro";
+import type { Element, Root, RootContent } from "hast";
 import fs from "fs/promises";
+import { select } from "hast-util-select";
 import path from "path";
-import { JSDOM } from "jsdom";
 import micromatch from "micromatch";
+import rehypeParse from "rehype-parse";
+import { unified } from "unified";
 import { entryToSimpleMarkdown } from "./entryToSimpleMarkdown";
 
 interface DocSet {
@@ -33,6 +36,8 @@ interface PluginContext {
   distDir: string;
   pages: { pathname: string }[];
 }
+
+const htmlDocumentParser = unified().use(rehypeParse);
 
 /**
  * Astro integration to generate a llms.txt file containing documentation sets.
@@ -148,22 +153,16 @@ async function buildEntryFromHtml(
   onlyStructure: boolean,
 ): Promise<string> {
   const html = await fs.readFile(htmlPath, "utf-8");
-  const dom = new JSDOM(html);
-  const doc = dom.window.document;
-  const main = doc.querySelector(mainSelector);
-  if (!main) throw new Error(`Missing main selector <${mainSelector}>`);
+  const document = htmlDocumentParser.parse(html) as Root;
+  const main = select(mainSelector, document);
+  if (!isElement(main)) throw new Error(`Missing main selector <${mainSelector}>`);
 
-  const h1 = main.querySelector("h1");
-  const title = h1?.textContent?.trim() ?? "Untitled";
-  if (h1) h1.remove();
-
-  const metaDesc = doc
-    .querySelector('meta[name="description"]')
-    ?.getAttribute("content")
-    ?.trim();
+  const h1 = select("h1", main);
+  const title = getTextContent(h1).trim() || "Untitled";
+  const metaDesc = getMetaContent(select('meta[name="description"]', document));
 
   const markdown = await entryToSimpleMarkdown(
-    main.innerHTML.trim(), 
+    main,
     ['h1','footer','header', ...ignoreSelectors],
     onlyStructure,
   );
@@ -227,4 +226,24 @@ function prioritizePathname(id: string, promote: string[] = [], demote: string[]
     (promoted > -1 ? promote.length - promoted : 0)
     + demote.length - demoted - 1;
   return '_'.repeat(prefixLength) + id;
+}
+
+function isElement(node: RootContent | null | undefined): node is Element {
+  return node?.type === "element";
+}
+
+function getMetaContent(node: RootContent | null | undefined): string | undefined {
+  if (!isElement(node)) return undefined;
+
+  const content = node.properties?.content;
+  return typeof content === "string" ? content.trim() || undefined : undefined;
+}
+
+function getTextContent(node: RootContent | null | undefined): string {
+  if (!node) return "";
+  if (node.type === "text") return node.value;
+  if ("children" in node && Array.isArray(node.children)) {
+    return node.children.map(child => getTextContent(child as RootContent)).join("");
+  }
+  return "";
 }
