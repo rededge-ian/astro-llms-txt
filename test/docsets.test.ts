@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
+import { entryToSimpleMarkdown } from "../src/entryToSimpleMarkdown.ts";
 import astroLlmsTxt from "../src/index.ts";
 
 interface FixturePage {
@@ -81,11 +82,11 @@ const fixturePages: FixturePage[] = [
     html: buildHtmlDocument({
       description: "Spacing summary",
       title: "Why brands move to Shipfluence",
-      titleHtml: "Why brands <span>move</span><span>to</span> Shipfluence",
+      titleHtml: "Why brands move<br>to Shipfluence",
       body: `
         <p>Spacing across <span>inline</span> <span>nodes</span> stays readable.</p>
         <p>Punctuation <span>stays</span><span>tight</span><span>.</span></p>
-        <h2>Why brands <span>move</span><span>to</span> Shipfluence</h2>
+        <h2>Why brands move<br>to Shipfluence</h2>
         <p><a href="/for-creators">For creators </a><a href="/locations/dc-metro">DC metro fulfillment </a><a href="/integrations">Integrations </a><a href="/industries/government-affairs">Government affairs</a></p>
       `,
     }),
@@ -130,6 +131,26 @@ test("spacing stays readable across split inline nodes in titles and headings", 
   assert.ok(!small.includes("moveto"));
   assert.ok(!llms.includes("moveto"));
   assert.ok(!full.includes("tight ."));
+});
+
+test("entryToSimpleMarkdown preserves whitespace across br in headings", async () => {
+  const markdown = await entryToSimpleMarkdown("<h2>Why brands move<br>to Shipfluence</h2>");
+
+  assert.equal(markdown, "## Why brands move to Shipfluence");
+});
+
+test("entryToSimpleMarkdown preserves whitespace across br in paragraphs", async () => {
+  const markdown = await entryToSimpleMarkdown("<p>Hello<br>world</p>");
+
+  assert.equal(markdown, "Hello world");
+});
+
+test("entryToSimpleMarkdown keeps punctuation tight across br boundaries", async () => {
+  const exclamation = await entryToSimpleMarkdown("<p>Hello<br>!</p>");
+  const comma = await entryToSimpleMarkdown("<p>Hello<br>, world</p>");
+
+  assert.equal(exclamation, "Hello!");
+  assert.equal(comma, "Hello, world");
 });
 
 test("adjacent sibling links serialize with stable readable separation", async t => {

@@ -125,6 +125,14 @@ function filterNode(node: RootContent, context: FilterContext): RootContent | nu
     return null;
   }
 
+  if (isBreakElement(node)) {
+    if (context.onlyStructure && !context.insideStructure) {
+      return null;
+    }
+
+    return { type: "text", value: " " };
+  }
+
   if (shouldDropElement(node, context.ignoreSelectors)) {
     return null;
   }
@@ -496,6 +504,10 @@ function isDecorativeMarkdownLine(line: string): boolean {
 
 function isElement(node: RootContent | null | undefined): node is Element {
   return node?.type === "element";
+}
+
+function isBreakElement(node: RootContent | null | undefined): boolean {
+  return isElement(node) && node.tagName === "br";
 }
 
 /** Render html content to Markdown to support rendering and simplifying MDX components */

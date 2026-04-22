@@ -530,6 +530,7 @@ function getMetaContent(node: RootContent | null | undefined): string | undefine
 function getTextContent(node: RootContent | null | undefined): string {
   if (!node) return "";
   if (node.type === "text") return collapseWhitespace(node.value);
+  if (isBreakElement(node)) return " ";
   if ("children" in node && Array.isArray(node.children)) {
     return joinTextChildren(node.children as RootContent[]);
   }
@@ -597,4 +598,8 @@ function shouldInsertTextBoundarySpace(
 
 function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, " ");
+}
+
+function isBreakElement(node: RootContent | null | undefined): boolean {
+  return isElement(node) && node.tagName === "br";
 }
