@@ -300,7 +300,6 @@ async function loadParsedPage(
   const htmlPath = getHtmlPath(context.distDir, pathname);
 
   try {
-    await fs.access(htmlPath);
     const html = await fs.readFile(htmlPath, "utf-8");
     const document = htmlDocumentParser.parse(html) as Root;
 
@@ -311,9 +310,16 @@ async function loadParsedPage(
       description: getMetaContent(select('meta[name="description"]', document)),
       document,
     };
-  } catch {
-    console.error(`❌ File not found: ${htmlPath}`);
-    return null;
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      if (!is404Pathname(pathname)) {
+        console.warn(`⚠️ Skipping page with missing HTML: ${htmlPath}`);
+      }
+
+      return null;
+    }
+
+    throw error;
   }
 }
 
@@ -422,6 +428,7 @@ function getMatchedPathnames(
   return [...new Set(
     pages
       .map(page => page.pathname)
+      .filter(pathname => !isExcludedPathname(pathname))
       .filter(pathname => include.some(pattern => matchesPathname(pathname, pattern))),
   )];
 }
@@ -431,7 +438,15 @@ function renderLinkLine(label: string, url: string, description?: string): strin
 }
 
 function getHtmlPath(distDir: string, pathname: string): string {
-  return path.join(distDir, pathname.replace(/\/$/, ""), "index.html");
+  if (isRootPathname(pathname)) {
+    return path.join(distDir, "index.html");
+  }
+
+  if (is404Pathname(pathname)) {
+    return path.join(distDir, "404.html");
+  }
+
+  return path.join(distDir, pathname.replace(/^\/+|\/+$/g, ""), "index.html");
 }
 
 function getSiteUrl(astroConfig: AstroConfig): URL {
@@ -477,8 +492,20 @@ function isRootPathname(pathname: string): boolean {
   return pathname === "" || pathname === "/";
 }
 
+function isExcludedPathname(pathname: string): boolean {
+  return is404Pathname(pathname);
+}
+
+function is404Pathname(pathname: string): boolean {
+  return pathname.replace(/^\/+|\/+$/g, "") === "404";
+}
+
 function isAbsoluteUrl(value: string): boolean {
   return /^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(value);
+}
+
+function isMissingFileError(error: unknown): error is NodeJS.ErrnoException {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 function requireValidDate(date: Date | undefined, pathname: string): Date {
@@ -502,9 +529,72 @@ function getMetaContent(node: RootContent | null | undefined): string | undefine
 
 function getTextContent(node: RootContent | null | undefined): string {
   if (!node) return "";
-  if (node.type === "text") return node.value;
+  if (node.type === "text") return collapseWhitespace(node.value);
   if ("children" in node && Array.isArray(node.children)) {
-    return node.children.map(child => getTextContent(child as RootContent)).join("");
+    return joinTextChildren(node.children as RootContent[]);
   }
   return "";
+}
+
+function joinTextChildren(children: RootContent[]): string {
+  let text = "";
+  let pendingWhitespace = false;
+  let previousNode: RootContent | null = null;
+  let previousText = "";
+
+  for (const child of children) {
+    const childText = getTextContent(child);
+    if (!childText.trim()) {
+      pendingWhitespace ||= /\s/.test(childText);
+      continue;
+    }
+
+    const leadingWhitespace = /^\s/.test(childText);
+    const trailingWhitespace = /\s$/.test(childText);
+    const trimmedText = childText.trim();
+
+    if (previousNode && shouldInsertTextBoundarySpace(
+      previousNode,
+      child,
+      previousText.at(-1),
+      trimmedText.at(0),
+      pendingWhitespace || leadingWhitespace,
+    )) {
+      text += " ";
+    }
+
+    text += trimmedText;
+    previousNode = child;
+    previousText = trimmedText;
+    pendingWhitespace = trailingWhitespace;
+  }
+
+  return text;
+}
+
+function shouldInsertTextBoundarySpace(
+  previousNode: RootContent,
+  nextNode: RootContent,
+  previousChar: string | undefined,
+  nextChar: string | undefined,
+  requestedByWhitespace: boolean,
+): boolean {
+  if (!previousChar || !nextChar) return false;
+  if (/[),.;:!?%\]}»”’]/u.test(nextChar)) return false;
+  if (/[(\[{«“‘]/u.test(previousChar)) return false;
+
+  if (requestedByWhitespace) {
+    return true;
+  }
+
+  return (
+    isElement(previousNode)
+    && isElement(nextNode)
+    && /[\p{L}\p{N}]/u.test(previousChar)
+    && /[\p{L}\p{N}]/u.test(nextChar)
+  );
+}
+
+function collapseWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ");
 }

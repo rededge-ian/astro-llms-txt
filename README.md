@@ -84,7 +84,7 @@ export default defineConfig({
 
 - If the homepage/root page matches a doc set, it is included, emitted first, and rendered as file-level lead-in context instead of as a synthetic `# Page title` entry.
 
-- `llms-full.txt` keeps useful text and links but strips obvious noise such as HTML comments, bare images, linked images, and hidden/purely visual elements where practical.
+- `llms-full.txt` keeps useful text and links, normalizes inline spacing for readable markdown, and strips obvious noise such as HTML comments, bare images, linked images, hidden/purely visual elements, and conservative social-embed fallback copy where practical.
 
 - Use `promote`/`demote` with glob patterns for ordering pages.
 
@@ -96,6 +96,8 @@ export default defineConfig({
 
 - The homepage (`/`) is automatically excluded from `indexSections`. Prefer narrow include globs such as `blog/**` or `docs/**` instead of broad catch-alls.
 
+- Astro's built `404.html` page is excluded from generated docsets and `indexSections` by default.
+
 - Public URLs are built from Astro's explicit `site` and `base` config. This integration does not try to infer a final hostname from Wrangler, Cloudflare previews, `workers.dev`, or custom domains.
 
 ## Docset behavior
@@ -104,7 +106,13 @@ export default defineConfig({
 
 - `llms-full.txt`: keeps full page text and meaningful links, while removing obvious presentational noise.
 
+- Inline text and adjacent links are normalized so split inline nodes do not collapse into unreadable `moveto`/`][` runs.
+
+- Short social-embed fallback UI such as `Prefer the source? View the Instagram post` is removed when it clearly points to ancillary Instagram/TikTok/Twitter/Facebook/LinkedIn/YouTube embed source links rather than core editorial copy.
+
 - If the homepage matches a doc set, it is always placed first and rendered as intro context without a synthetic `# {title}` heading.
+
+- Astro `404.html` pages are not included in generated docsets or `indexSections`.
 
 - Non-homepage entries keep the normal per-page shape:
 
@@ -242,7 +250,8 @@ If a `date-desc` section matches a page and `datePath` returns `undefined` or an
    - the homepage does not begin with `# {title}`
    - the homepage still includes its description, `URL:`, and body content
    - non-homepage entries still begin with `# {title}`
-   - HTML comments, image-only lines, linked-image lines, and hidden visual fragments are removed where practical
+   - HTML comments, image-only lines, linked-image lines, hidden visual fragments, and obvious ancillary social-embed fallback copy are removed where practical
+   - adjacent inline text and adjacent links remain readable instead of collapsing together
 5. Inspect `dist/llms-small.txt`:
    - the homepage uses the same intro treatment with no synthetic H1
    - non-homepage entries still use the normal `# {title}` page heading
