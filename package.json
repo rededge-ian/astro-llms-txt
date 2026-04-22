@@ -5,6 +5,9 @@
 	"description": "Generate llms.txt files to train large language models on your astro project",
 	"author": "4hse",
 	"type": "module",
+	"scripts": {
+		"test": "node --import tsx --test test/**/*.test.ts"
+	},
 	"exports": {
 		".": "./src/index.ts"
 	},
@@ -23,7 +26,8 @@
 		"unist-util-remove": "^4.0.0"
 	},
 	"devDependencies": {
-		"astro": "^5.1.6 || ^6.0.0"
+		"astro": "^5.1.6 || ^6.0.0",
+		"tsx": "^4.21.0"
 	},
 	"peerDependencies": {
 		"astro": "^5.1.6 || ^6.0.0"

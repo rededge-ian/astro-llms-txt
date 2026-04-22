@@ -3,8 +3,8 @@
 An Astro integration to generate AI‑friendly documentation files:
 
 - **`/llms.txt`** – primary index with title, description, and structured links  
-- **`/llms-small.txt`** – ultra‑compact version containing only page structure (titles, lists)  
-- **`/llms-full.txt`** – full Markdown documentation in a single file  
+- **`/llms-small.txt`** – compact companion docset that keeps page headings and list structure  
+- **`/llms-full.txt`** – full companion docset with obvious presentational noise removed  
 
 ---
 
@@ -80,7 +80,11 @@ export default defineConfig({
 });
 ```
 
-- `onlyStructure`: true makes `llms-small.txt` include only headings and list structure.
+- `onlyStructure: true` makes `llms-small.txt` keep `h2`-`h6`, `ul`, `ol`, `li`, and their text from the page body.
+
+- If the homepage/root page matches a doc set, it is included, emitted first, and rendered as file-level lead-in context instead of as a synthetic `# Page title` entry.
+
+- `llms-full.txt` keeps useful text and links but strips obvious noise such as HTML comments, bare images, linked images, and hidden/purely visual elements where practical.
 
 - Use `promote`/`demote` with glob patterns for ordering pages.
 
@@ -92,13 +96,17 @@ export default defineConfig({
 
 - The homepage (`/`) is automatically excluded from `indexSections`. Prefer narrow include globs such as `blog/**` or `docs/**` instead of broad catch-alls.
 
-## Difference: small vs. full
+- Public URLs are built from Astro's explicit `site` and `base` config. This integration does not try to infer a final hostname from Wrangler, Cloudflare previews, `workers.dev`, or custom domains.
 
-- `llms-small.txt`: extremely concise—keeps only hierarchy (titles, lists), ideal for agents with limited token budget.
+## Docset behavior
 
-- `llms-full.txt`: exports entire documentation in a single file with full Markdown—suitable for RAG flows, IDEs, or tools that ingest content once.
+- `llms-small.txt`: keeps compact page structure from the body content by preserving headings and lists.
 
-Both doc set outputs now prepend each page entry with a canonical source URL:
+- `llms-full.txt`: keeps full page text and meaningful links, while removing obvious presentational noise.
+
+- If the homepage matches a doc set, it is always placed first and rendered as intro context without a synthetic `# {title}` heading.
+
+- Non-homepage entries keep the normal per-page shape:
 
 ```md
 # Page title
@@ -108,6 +116,18 @@ Both doc set outputs now prepend each page entry with a canonical source URL:
 URL: https://example.com/docs/page/
 
 Page body in Markdown...
+```
+
+- Homepage entries in `llms-full.txt` and `llms-small.txt` look like this instead:
+
+```md
+<SYSTEM>Doc set summary</SYSTEM>
+
+> Homepage description
+
+URL: https://example.com/docs/
+
+Homepage body in Markdown...
 ```
 
 ## Configuration summary
@@ -131,12 +151,12 @@ Page body in Markdown...
 | Property          | Type        | Description                             |
 | ----------------- | ----------- | --------------------------------------- |
 | `title`           | `string`    | Section title                           |
-| `description`     | `string`    | Blockquote in each file                 |
-| `url`             | `string`    | Output file URL (e.g. `/llms-full.txt`) |
+| `description`     | `string`    | Summary written into the file-level `<SYSTEM>...</SYSTEM>` block |
+| `url`             | `string`    | Output file path (e.g. `/llms-full.txt`) |
 | `include`         | `string[]`  | Glob patterns for pages                 |
 | `promote`         | `string[]?` | Globs to push pages higher              |
 | `demote`          | `string[]?` | Globs to push pages lower               |
-| `onlyStructure`   | `boolean?`  | If true, extracts headings + lists only |
+| `onlyStructure`   | `boolean?`  | If true, keeps `h2`-`h6` plus list structure from the page body |
 | `mainSelector`    | `string?`   | CSS selector for main HTML root         |
 | `ignoreSelectors` | `string[]?` | CSS selectors to skip in HTML to MD     |
 
@@ -164,7 +184,17 @@ Page body in Markdown...
 
 - `notes` is emitted as normal intro markdown before any H2 sections, not as a dedicated `## Notes` section.
 
-- The homepage is not included in `indexSections`, even if a glob matches `/`. You should still prefer focused patterns such as `docs/**`, `services/**`, or `blog/**`.
+- The homepage is not included in `indexSections`, even if a glob matches `/` or `**`. You should still prefer focused patterns such as `docs/**`, `services/**`, or `blog/**`.
+
+## Canonical URLs
+
+- Page `URL:` lines and generated doc set links are built from Astro's configured `site` and `base`.
+
+- If `site` is `https://example.com` and `base` is `/product/`, generated URLs look like `https://example.com/product/docs/page/`.
+
+- This package does not inspect Wrangler config or infer preview/custom hostnames automatically.
+
+- If you need environment-specific hostnames, set `site` and `base` explicitly for that build environment.
 
 ## `datePath` example
 
@@ -208,13 +238,15 @@ If a `date-desc` section matches a page and `datePath` returns `undefined` or an
    - the homepage is absent from those sections
    - generated doc set links appear under `## Optional` when `indexSections` is set
 4. Inspect `dist/llms-full.txt`:
-   - every entry begins with `# {title}`
-   - the description, when present, is on the next blockquote line
-   - the next header line is `URL: {canonical}`
-   - the body follows after a blank line
+   - the homepage appears first if it matches the doc set
+   - the homepage does not begin with `# {title}`
+   - the homepage still includes its description, `URL:`, and body content
+   - non-homepage entries still begin with `# {title}`
+   - HTML comments, image-only lines, linked-image lines, and hidden visual fragments are removed where practical
 5. Inspect `dist/llms-small.txt`:
-   - it uses the same entry header shape
-   - the body is reduced to headings and lists only
+   - the homepage uses the same intro treatment with no synthetic H1
+   - non-homepage entries still use the normal `# {title}` page heading
+   - the body keeps meaningful `h2`-`h6` headings and lists from the page content
 6. Verify date ordering in the `date-desc` section:
    - newest pages appear first
    - ties fall back to deterministic ordering

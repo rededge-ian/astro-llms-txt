@@ -117,11 +117,10 @@ async function processAllDocSets(
 ): Promise<string[]> {
   const lines: string[] = [];
   const { config, astroConfig } = context;
-  const site = getSiteUrl(astroConfig);
 
   for (const set of config.docSet ?? []) {
     await processDocSet({ set, context, collator });
-    const url = new URL(set.url, site);
+    const url = resolvePublicUrl(set.url, astroConfig);
     lines.push(`- [${set.title}](${url}): ${set.description}`);
   }
 
@@ -140,7 +139,7 @@ async function processDocSet(args: {
   const { context, collator, set } = args;
   const { distDir, config } = context;
   const matches = getMatchedPathnames(context.pages, set.include);
-  const sorted = sortPathnames(matches, collator, set.promote, set.demote);
+  const sorted = sortDocSetPathnames(matches, collator, set.promote, set.demote);
   const entries: string[] = [];
 
   for (const pathname of sorted) {
@@ -152,6 +151,7 @@ async function processDocSet(args: {
       set.mainSelector,
       set.ignoreSelectors,
       set.onlyStructure ?? false,
+      { suppressTitleHeading: isRootPathname(pathname) },
     );
     entries.push(entry);
   }
@@ -172,7 +172,7 @@ async function buildIndexSections(
 
   for (const section of context.config.indexSections ?? []) {
     const matches = getMatchedPathnames(context.pages, section.include)
-      .filter(pathname => pathname !== "/");
+      .filter(pathname => !isRootPathname(pathname));
 
     const entries = await Promise.all(
       matches.map(async pathname => {
@@ -206,6 +206,7 @@ async function buildEntryFromPage(
   mainSelector: string = "main",
   ignoreSelectors: string[] = [],
   onlyStructure: boolean,
+  options: { suppressTitleHeading?: boolean } = {},
 ): Promise<string> {
   const excerpt = buildPageExcerpt(page, mainSelector);
   const markdown = await entryToSimpleMarkdown(
@@ -214,10 +215,11 @@ async function buildEntryFromPage(
     onlyStructure,
   );
 
-  const parts = [`# ${excerpt.title}`];
+  const parts: string[] = [];
+  if (!options.suppressTitleHeading) parts.push(`# ${excerpt.title}`);
   if (excerpt.description) parts.push(`> ${excerpt.description}`);
   parts.push(`URL: ${excerpt.canonical}`);
-  parts.push(markdown.trim());
+  if (markdown.trim()) parts.push(markdown.trim());
 
   return parts.join("\n\n");
 }
@@ -305,7 +307,7 @@ async function loadParsedPage(
     return {
       pathname,
       htmlPath,
-      canonical: new URL(pathname, getSiteUrl(context.astroConfig)).toString(),
+      canonical: resolvePublicUrl(pathname, context.astroConfig),
       description: getMetaContent(select('meta[name="description"]', document)),
       document,
     };
@@ -324,13 +326,14 @@ function sortIndexSectionEntries(
   const sortedEntries = [...entries];
 
   if (section.sort === "date-desc") {
-    if (!context.config.datePath) {
+    const { datePath } = context.config;
+    if (!datePath) {
       throw new Error('indexSections with sort "date-desc" require a datePath(pathname) callback.');
     }
 
     const datedEntries = sortedEntries.map(entry => ({
       entry,
-      date: requireValidDate(context.config.datePath(entry.pathname), entry.pathname),
+      date: requireValidDate(datePath(entry.pathname), entry.pathname),
     }));
 
     datedEntries.sort((a, b) => {
@@ -366,6 +369,19 @@ function sortPathnames(
   );
 }
 
+function sortDocSetPathnames(
+  pathnames: string[],
+  collator: Intl.Collator,
+  promote: string[] = [],
+  demote: string[] = [],
+): string[] {
+  const sorted = sortPathnames(pathnames, collator, promote, demote);
+  return [
+    ...sorted.filter(pathname => isRootPathname(pathname)),
+    ...sorted.filter(pathname => !isRootPathname(pathname)),
+  ];
+}
+
 function comparePathPriority(
   left: string,
   right: string,
@@ -388,10 +404,10 @@ function getPathPriority(
   promote: string[] = [],
   demote: string[] = [],
 ): number {
-  const demoted = demote.findIndex(expr => micromatch.isMatch(pathname, expr));
+  const demoted = demote.findIndex(expr => matchesPathname(pathname, expr));
   const promoted = demoted > -1
     ? -1
-    : promote.findIndex(expr => micromatch.isMatch(pathname, expr));
+    : promote.findIndex(expr => matchesPathname(pathname, expr));
 
   return (
     (promoted > -1 ? promote.length - promoted : 0)
@@ -403,9 +419,11 @@ function getMatchedPathnames(
   pages: { pathname: string }[],
   include: string[],
 ): string[] {
-  return pages
-    .map(page => page.pathname)
-    .filter(pathname => include.some(pattern => micromatch.isMatch(pathname, pattern)));
+  return [...new Set(
+    pages
+      .map(page => page.pathname)
+      .filter(pathname => include.some(pattern => matchesPathname(pathname, pattern))),
+  )];
 }
 
 function renderLinkLine(label: string, url: string, description?: string): string {
@@ -416,12 +434,51 @@ function getHtmlPath(distDir: string, pathname: string): string {
   return path.join(distDir, pathname.replace(/\/$/, ""), "index.html");
 }
 
-function getSiteUrl(astroConfig: AstroConfig): URL | string {
+function getSiteUrl(astroConfig: AstroConfig): URL {
   if (!astroConfig.site) {
     throw new Error('astro-llms-txt requires Astro "site" to generate absolute llms.txt URLs.');
   }
 
-  return astroConfig.site;
+  return typeof astroConfig.site === "string" ? new URL(astroConfig.site) : astroConfig.site;
+}
+
+function resolvePublicUrl(pathname: string, astroConfig: AstroConfig): string {
+  if (isAbsoluteUrl(pathname)) {
+    return new URL(pathname).toString();
+  }
+
+  return new URL(buildPublicPath(pathname, astroConfig.base), getSiteUrl(astroConfig)).toString();
+}
+
+function buildPublicPath(pathname: string, base: string = "/"): string {
+  const normalizedBase = normalizeBasePath(base);
+  const normalizedPathname = normalizePublicPathname(pathname);
+
+  if (normalizedBase === "/") return normalizedPathname;
+  if (normalizedPathname === "/") return normalizedBase;
+  return `${normalizedBase.replace(/\/$/, "")}${normalizedPathname}`;
+}
+
+function normalizeBasePath(base: string): string {
+  if (!base || base === "/") return "/";
+  return `/${base.replace(/^\/+|\/+$/g, "")}/`;
+}
+
+function normalizePublicPathname(pathname: string): string {
+  if (isRootPathname(pathname)) return "/";
+  return `/${pathname.replace(/^\/+/, "")}`;
+}
+
+function matchesPathname(pathname: string, pattern: string): boolean {
+  return micromatch.isMatch(isRootPathname(pathname) ? "/" : pathname, pattern);
+}
+
+function isRootPathname(pathname: string): boolean {
+  return pathname === "" || pathname === "/";
+}
+
+function isAbsoluteUrl(value: string): boolean {
+  return /^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(value);
 }
 
 function requireValidDate(date: Date | undefined, pathname: string): Date {
